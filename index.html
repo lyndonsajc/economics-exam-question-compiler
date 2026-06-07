@@ -55,7 +55,8 @@
         <input id="topic" placeholder="Topic e.g. Market Failure" />
         <input id="syllabusArea" placeholder="Syllabus Area e.g. Micro / Macro" />
       </div>
-      <textarea id="question" placeholder="Question"></textarea>
+      <textarea id="question" placeholder="Question / main case study question"></textarea>
+      <textarea id="subQuestions" placeholder="Sub-questions for case study e.g. (a) ... (b) ... (c) ..."></textarea>
       <textarea id="extract" placeholder="Case study extract / source material"></textarea>
       <textarea id="answerOutline" placeholder="Optional answer outline / examiner comments"></textarea>
       <textarea id="keywords" placeholder="Economic keywords, separated by commas"></textarea>
@@ -135,7 +136,7 @@ const firebaseConfig = {
 const COLLECTION = "examQuestions";
 let db, questionsRef, questions = [], firebaseReady = false;
 const el = id => document.getElementById(id);
-const fields = ["editId","year","jc","level","type","qNumber","part","topic","syllabusArea","question","extract","answerOutline","keywords","extractSummary"].reduce((a,id)=>(a[id]=el(id),a),{});
+const fields = ["editId","year","jc","level","type","qNumber","part","topic","syllabusArea","question","subQuestions","extract","answerOutline","keywords","extractSummary"].reduce((a,id)=>(a[id]=el(id),a),{});
 
 function withTimeout(promise, ms, label){ return Promise.race([promise, new Promise((_,rej)=>setTimeout(()=>rej(new Error(label||"Timed out")), ms))]); }
 function log(msg, cls="logWork"){ const box=el("bulkLog"); box.classList.remove("hidden"); const d=document.createElement("div"); d.className="logItem "+cls; d.textContent=msg; box.prepend(d); }
@@ -163,7 +164,7 @@ window.addEventListener("app-unlocked", async()=>{ if(!firebaseReady) initFireba
 function getFormItem(){ return {
   year: fields.year.value.trim(), jc: fields.jc.value.trim(), level: fields.level.value, type: fields.type.value,
   qNumber: fields.qNumber.value.trim(), part: fields.part.value.trim(), topic: fields.topic.value.trim(), syllabusArea: fields.syllabusArea.value.trim(),
-  question: fields.question.value.trim(), extract: fields.extract.value.trim(), answerOutline: fields.answerOutline.value.trim(), keywords: fields.keywords.value.trim(), extractSummary: fields.extractSummary.value.trim(), updatedAt:new Date().toISOString()
+  question: fields.question.value.trim(), subQuestions: fields.subQuestions.value.trim(), extract: fields.extract.value.trim(), answerOutline: fields.answerOutline.value.trim(), keywords: fields.keywords.value.trim(), extractSummary: fields.extractSummary.value.trim(), updatedAt:new Date().toISOString()
 };}
 
 async function saveQuestion(){
@@ -189,7 +190,7 @@ function getFilteredQuestions(){
 
 function renderQuestions(){ updateFilters(); const list=getFilteredQuestions(); el("countStatus").textContent=`${list.length} shown / ${questions.length} total`; el("questionList").innerHTML = list.length ? "" : "<p>No questions found.</p>"; list.forEach(q=>{ const div=document.createElement("div"); div.className="card question-card"; div.innerHTML=`
  <div class="compact"><div><b>${safe(q.year)} | ${safe(q.jc)}</b><br><span class="small">${safe(q.level)} | ${safe(q.type)} | ${safe(q.qNumber)} ${safe(q.part||"")}</span></div><div>${safe(q.topic||"-")}</div><div>${safe(q.syllabusArea||"-")}</div><div class="tags">${String(q.keywords||"").split(",").map(x=>x.trim()).filter(Boolean).slice(0,5).map(k=>`<span>${safe(k)}</span>`).join("")}</div><div class="actions"><button data-edit="${q.id}">Edit</button><button class="danger" data-delete="${q.id}">Delete</button></div></div>
- <details><summary>View Question / Extract</summary><p><b>Question:</b><br>${format(q.question)}</p>${q.extract?`<p><b>Extract:</b><br>${format(q.extract)}</p>`:""}${q.extractSummary?`<p><b>Extract Summary:</b><br>${format(q.extractSummary)}</p>`:""}${q.answerOutline?`<p><b>Answer Outline / Comments:</b><br>${format(q.answerOutline)}</p>`:""}</details>`; el("questionList").appendChild(div); }); }
+ <details><summary>View Full Case Study / Question</summary><p><b>Main Question:</b><br>${format(q.question)}</p>${q.subQuestions?`<p><b>Sub-questions:</b><br>${format(q.subQuestions)}</p>`:""}${q.extract?`<p><b>Full Extract / Source Material:</b><br>${format(q.extract)}</p>`:""}${q.extractSummary?`<p><b>Extract Summary:</b><br>${format(q.extractSummary)}</p>`:""}${q.answerOutline?`<p><b>Answer Outline / Comments:</b><br>${format(q.answerOutline)}</p>`:""}</details>`; el("questionList").appendChild(div); }); }
 function updateFilters(){ fillSelect(el("filterYear"),[...new Set(questions.map(q=>q.year).filter(Boolean))].sort().reverse(),"All Years"); fillSelect(el("filterJC"),[...new Set(questions.map(q=>q.jc).filter(Boolean))].sort(),"All JC / Sources"); fillSelect(el("filterArea"),[...new Set(questions.map(q=>q.syllabusArea).filter(Boolean))].sort(),"All Areas"); }
 function fillSelect(s,vals,label){ const cur=s.value; s.innerHTML=`<option value="">${label}</option>`; vals.forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;s.appendChild(o);}); s.value=cur; }
 function safe(t){ return String(t||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m])); }
@@ -236,16 +237,39 @@ async function aiCaptureFromUploadedText(){
   setUpload(`AI import completed. Saved ${saved}. Skipped ${skipped}.`); await loadQuestions(); }
  catch(err){ console.error(err); setUpload(""); alert("AI import failed: "+err.message); }
 }
-function normalizeItem(item){ return { year:item.year||"", jc:item.jc||"", level:cleanLevel(item.level), type:cleanType(item.type), qNumber:item.qNumber||"", part:item.part||"", topic:item.topic||"", syllabusArea:item.syllabusArea||"", question:item.question||"", extract:item.extract||"", answerOutline:item.answerOutline||"", keywords:Array.isArray(item.keywords)?item.keywords.join(", "):(item.keywords||""), extractSummary:item.extractSummary||"", createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() }; }
+function normalizeItem(item){ return { year:item.year||"", jc:item.jc||"", level:cleanLevel(item.level), type:cleanType(item.type), qNumber:item.qNumber||"", part:item.part||"", topic:item.topic||"", syllabusArea:item.syllabusArea||"", question:item.question||"", subQuestions:formatSubQuestions(item.subQuestions), extract:item.extract||"", answerOutline:item.answerOutline||"", keywords:Array.isArray(item.keywords)?item.keywords.join(", "):(item.keywords||""), extractSummary:item.extractSummary||"", createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() }; }
+function formatSubQuestions(v){ if(Array.isArray(v)) return v.map(x => typeof x === "string" ? x : `${x.part||""} ${x.question||""}`.trim()).filter(Boolean).join("\n"); return v || ""; }
 function cleanLevel(v){ v=String(v||"").toUpperCase(); return v.includes("H1")?"H1":"H2"; }
 function cleanType(v){ v=String(v||"").toLowerCase(); return v.includes("case")||v.includes("csq")?"Case Study":"Essay"; }
 function isDuplicate(item){ const key = `${item.year||""}|${item.jc||""}|${cleanLevel(item.level)}|${cleanType(item.type)}|${item.qNumber||""}|${String(item.question||"").slice(0,80)}`.toLowerCase(); return questions.some(q=>`${q.year||""}|${q.jc||""}|${q.level||""}|${q.type||""}|${q.qNumber||""}|${String(q.question||"").slice(0,80)}`.toLowerCase()===key); }
 
-async function aiCaptureSingleQuestion(){ const item=getFormItem(); const result=await callAI(JSON.stringify([item])); try{ const arr=JSON.parse(cleanJson(result)); const d=Array.isArray(arr)?arr[0]:arr; if(!d) return; fields.year.value=d.year||fields.year.value; fields.jc.value=d.jc||fields.jc.value; fields.level.value=cleanLevel(d.level||fields.level.value); fields.type.value=cleanType(d.type||fields.type.value); fields.qNumber.value=d.qNumber||fields.qNumber.value; fields.part.value=d.part||fields.part.value; fields.topic.value=d.topic||fields.topic.value; fields.syllabusArea.value=d.syllabusArea||fields.syllabusArea.value; fields.keywords.value=Array.isArray(d.keywords)?d.keywords.join(", "):(d.keywords||fields.keywords.value); fields.extractSummary.value=d.extractSummary||fields.extractSummary.value; }catch(err){ alert("AI output could not be read."); } }
+async function aiCaptureSingleQuestion(){
+ const item=getFormItem();
+ const result=await callAI(JSON.stringify([item]));
+ try{
+  const arr=JSON.parse(cleanJson(result));
+  const d=Array.isArray(arr)?arr[0]:arr;
+  if(!d) return;
+  fields.year.value=d.year||fields.year.value;
+  fields.jc.value=d.jc||fields.jc.value;
+  fields.level.value=cleanLevel(d.level||fields.level.value);
+  fields.type.value=cleanType(d.type||fields.type.value);
+  fields.qNumber.value=d.qNumber||fields.qNumber.value;
+  fields.part.value=d.part||fields.part.value;
+  fields.topic.value=d.topic||fields.topic.value;
+  fields.syllabusArea.value=d.syllabusArea||fields.syllabusArea.value;
+  fields.question.value=d.question||fields.question.value;
+  fields.subQuestions.value=formatSubQuestions(d.subQuestions)||fields.subQuestions.value;
+  fields.extract.value=d.extract||fields.extract.value;
+  fields.keywords.value=Array.isArray(d.keywords)?d.keywords.join(", "):(d.keywords||fields.keywords.value);
+  fields.extractSummary.value=d.extractSummary||fields.extractSummary.value;
+ }catch(err){ alert("AI output could not be read."); }
+}
 
-function exportRows(){ return getFilteredQuestions().map(q=>({Year:q.year,JC:q.jc,Level:q.level,Type:q.type,"Question Number":q.qNumber,Part:q.part,Topic:q.topic,"Syllabus Area":q.syllabusArea,Question:q.question,Extract:q.extract,"Answer Outline":q.answerOutline,Keywords:q.keywords,"Extract Summary":q.extractSummary})); }
+
+function exportRows(){ return getFilteredQuestions().map(q=>({Year:q.year,JC:q.jc,Level:q.level,Type:q.type,"Question Number":q.qNumber,Part:q.part,Topic:q.topic,"Syllabus Area":q.syllabusArea,Question:q.question,"Sub-questions":q.subQuestions,Extract:q.extract,"Answer Outline":q.answerOutline,Keywords:q.keywords,"Extract Summary":q.extractSummary})); }
 function exportExcel(){ const data=exportRows(); if(!data.length) return alert("No questions to export."); const ws=XLSX.utils.json_to_sheet(data); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Exam Questions"); XLSX.writeFile(wb,"economics_exam_questions.xlsx"); }
-async function exportWord(){ const rows=getFilteredQuestions(); if(!rows.length) return alert("No questions to export."); const {Document,Packer,Paragraph,TextRun}=docx; const children=[new Paragraph({children:[new TextRun({text:"Economics Exam Questions",bold:true,size:32})]}),new Paragraph("")]; rows.forEach(q=>{ children.push(new Paragraph({children:[new TextRun({text:`${q.year||""} | ${q.jc||""} | ${q.level||""} | ${q.type||""} | ${q.qNumber||""} ${q.part||""}`,bold:true})]}),new Paragraph(`Topic: ${q.topic||"-"}`),new Paragraph(`Syllabus Area: ${q.syllabusArea||"-"}`),new Paragraph(`Question: ${q.question||"-"}`),new Paragraph(`Extract: ${q.extract||"-"}`),new Paragraph(`Keywords: ${q.keywords||"-"}`),new Paragraph("")); }); const blob=await Packer.toBlob(new Document({sections:[{children}]})); downloadBlob(blob,"economics_exam_questions.docx"); }
+async function exportWord(){ const rows=getFilteredQuestions(); if(!rows.length) return alert("No questions to export."); const {Document,Packer,Paragraph,TextRun}=docx; const children=[new Paragraph({children:[new TextRun({text:"Economics Exam Questions",bold:true,size:32})]}),new Paragraph("")]; rows.forEach(q=>{ children.push(new Paragraph({children:[new TextRun({text:`${q.year||""} | ${q.jc||""} | ${q.level||""} | ${q.type||""} | ${q.qNumber||""} ${q.part||""}`,bold:true})]}),new Paragraph(`Topic: ${q.topic||"-"}`),new Paragraph(`Syllabus Area: ${q.syllabusArea||"-"}`),new Paragraph(`Question: ${q.question||"-"}`),new Paragraph(`Sub-questions: ${q.subQuestions||"-"}`),new Paragraph(`Extract: ${q.extract||"-"}`),new Paragraph(`Keywords: ${q.keywords||"-"}`),new Paragraph("")); }); const blob=await Packer.toBlob(new Document({sections:[{children}]})); downloadBlob(blob,"economics_exam_questions.docx"); }
 function exportPDF(){ const rows=getFilteredQuestions(); if(!rows.length) return alert("No questions to export."); const {jsPDF}=window.jspdf; const pdf=new jsPDF(); let y=10; pdf.setFontSize(14); pdf.text("Economics Exam Questions",10,y); y+=10; pdf.setFontSize(10); rows.forEach(q=>{ const lines=pdf.splitTextToSize(`${q.year||""} | ${q.jc||""} | ${q.level||""} | ${q.type||""} | ${q.qNumber||""} ${q.part||""}\nTopic: ${q.topic||"-"}\nQuestion:\n${q.question||"-"}\nExtract:\n${q.extract||"-"}\nKeywords: ${q.keywords||"-"}\n`,180); lines.forEach(line=>{ if(y>280){pdf.addPage();y=10;} pdf.text(line,10,y); y+=6;}); y+=8;}); pdf.save("economics_exam_questions.pdf"); }
 function downloadJson(){ const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),questions},null,2)],{type:"application/json"}); downloadBlob(blob,"economics_question_bank_backup.json"); }
 function downloadBlob(blob,name){ const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; a.click(); }
