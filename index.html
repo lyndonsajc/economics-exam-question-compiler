@@ -159,7 +159,7 @@ async function loadQuestions(){
   }catch(err){ console.error(err); el("firebaseStatus").textContent="Could not load Firebase. Check Firestore rules."; }
 }
 
-window.addEventListener("app-unlocked", async()=>{ if(!firebaseReady) initFirebase(); renderQuestions(); await loadQuestions(); });
+async function startApp(){   if(!firebaseReady) initFirebase();   renderQuestions();   await loadQuestions(); }  window.addEventListener("app-unlocked", startApp);  if(sessionStorage.getItem("econsQuestionBankUnlocked") === "yes"){   startApp(); }
 
 function getFormItem(){ return {
   year: fields.year.value.trim(), jc: fields.jc.value.trim(), level: fields.level.value, type: fields.type.value,
