@@ -1,7 +1,7 @@
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   try {
-    const { text, questions } = req.body || {};
+    const { text, questions, fileName } = req.body || {};
     if (!text) return res.status(400).json({ error: "No answer text supplied" });
     if (!process.env.OPENROUTER_API_KEY) return res.status(500).json({ error: "OPENROUTER_API_KEY is not set in Vercel Environment Variables" });
 
@@ -13,11 +13,14 @@ export default async function handler(req, res) {
 
     const prompt = `You are an expert Singapore A-Level Economics teacher.
 
-Match this answer key / mark scheme to the saved questions.
+Match this answer key / mark scheme file to the saved questions.
+File name: ${fileName || "Unknown answer file"}
+
 Rules:
-- Match by year, JC/source, level, type, qNumber, and part label.
-- For Essay, match answers to partAAnswer and partBAnswer.
-- For Case Study, match answers to partAAnswer through partGAnswer.
+- The answer text may come from one answer-key file in a bulk upload.
+- Match by year, canonical JC/source, level, type, qNumber, and part label. Treat RI as Raffles Institution, HCI as Hwa Chong Institution, etc.
+- For Essay, match answers to partAAnswer and partBAnswer under the same Essay number, e.g. Essay 5(a) → Essay 5 part A.
+- For Case Study, match answers to partAAnswer through partGAnswer under the same Case Study number, e.g. Case Study 1(e) → Case Study 1 part E.
 - Do not guess if uncertain. Use confidence 0 to 1.
 - Return only matches with confidence >= 0.70.
 
