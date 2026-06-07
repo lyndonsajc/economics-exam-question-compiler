@@ -8,6 +8,7 @@
   <!-- Document extraction -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://unpkg.com/mammoth/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <!-- Export tools -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
@@ -114,7 +115,11 @@
 
     <div class="card">
       <h2>Upload PDF / Word Documents</h2>
-      <input type="file" id="docUpload" accept=".pdf,.docx" multiple />
+      <input type="file" id="docUpload" accept=".pdf,.docx,.png,.jpg,.jpeg" multiple />
+      <label class="small" style="display:flex;gap:8px;align-items:center;margin:8px 0;">
+        <input id="forceOcr" type="checkbox" style="width:auto;margin:0;" />
+        Force OCR for scanned/image PDFs
+      </label>
       <button id="extractBtn" type="button">Extract Text from Uploaded Files</button>
       <textarea id="uploadedText" placeholder="Extracted text from all uploaded files will appear here"></textarea>
       <button id="aiUploadBtn" class="green" type="button">AI Capture Questions + Extracts + Keywords</button>
@@ -214,6 +219,12 @@
     deleteDoc,
     doc
   } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+
+
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
 
   const firebaseConfig = {
     apiKey: "AIzaSyC2LkAw5ntmHlquHVl91eX2G5FhDCnHLWE",
@@ -468,45 +479,126 @@
   async function extractFromDocument() {
     const files = Array.from(el("docUpload").files || []);
     if (files.length === 0) {
-      alert("Upload at least one PDF or Word document first.");
+      alert("Upload at least one PDF, Word document, or image first.");
       return;
     }
 
     el("uploadStatus").textContent = "Extracting text from files...";
     let combined = "";
 
-    for (const file of files) {
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+      const file = files[fileIndex];
+      el("uploadStatus").textContent = `Processing ${fileIndex + 1}/${files.length}: ${file.name}`;
+
       try {
         let text = "";
-        if (file.name.toLowerCase().endsWith(".pdf")) {
-          text = await extractPdfText(file);
-        } else if (file.name.toLowerCase().endsWith(".docx")) {
+        const name = file.name.toLowerCase();
+
+        if (name.endsWith(".pdf")) {
+          text = await extractPdfText(file, fileIndex + 1, files.length);
+        } else if (name.endsWith(".docx")) {
           text = await extractDocxText(file);
+        } else if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")) {
+          text = await ocrImageFile(file, `OCR image ${fileIndex + 1}/${files.length}: ${file.name}`);
         } else {
           text = `[Skipped unsupported file: ${file.name}]`;
         }
-        combined += `\n\n===== FILE: ${file.name} =====\n\n${text}`;
+
+        combined += `
+
+===== FILE: ${file.name} =====
+
+${text}`;
       } catch (err) {
         console.error(err);
-        combined += `\n\n===== FILE: ${file.name} =====\n\n[Could not extract this file]`;
+        combined += `
+
+===== FILE: ${file.name} =====
+
+[Could not extract this file]`;
       }
     }
 
     el("uploadedText").value = combined.trim();
-    el("uploadStatus").textContent = `Extracted text from ${files.length} file(s).`;
+    el("uploadStatus").textContent = `Extracted text from ${files.length} file(s). Ready for AI capture.`;
   }
 
-  async function extractPdfText(file) {
+  async function extractPdfText(file, fileIndex, totalFiles) {
     const buffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
     let text = "";
 
     for (let i = 1; i <= pdf.numPages; i++) {
+      el("uploadStatus").textContent = `Reading PDF text ${fileIndex}/${totalFiles}: ${file.name}, page ${i}/${pdf.numPages}`;
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      text += content.items.map(item => item.str).join(" ") + "\n\n";
+      text += content.items.map(item => item.str).join(" ") + "
+
+";
     }
-    return text;
+
+    const forceOcr = el("forceOcr") && el("forceOcr").checked;
+    const usefulText = text.replace(/\s+/g, "").length;
+
+    if (forceOcr || usefulText < 100) {
+      let ocrText = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        el("uploadStatus").textContent = `OCR scanned PDF ${fileIndex}/${totalFiles}: ${file.name}, page ${i}/${pdf.numPages}`;
+        const page = await pdf.getPage(i);
+        const canvas = await renderPdfPageToCanvas(page);
+        const pageText = await ocrCanvas(canvas, `OCR ${file.name} page ${i}/${pdf.numPages}`);
+        ocrText += pageText + "
+
+";
+      }
+      return ocrText.trim() || text.trim();
+    }
+
+    return text.trim();
+  }
+
+  async function renderPdfPageToCanvas(page) {
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: context, viewport }).promise;
+    return canvas;
+  }
+
+  async function ocrCanvas(canvas, label) {
+    if (!window.Tesseract) {
+      throw new Error("Tesseract OCR library not loaded.");
+    }
+
+    const result = await Tesseract.recognize(canvas, "eng", {
+      logger: m => {
+        if (m.status && typeof m.progress === "number") {
+          const pct = Math.round(m.progress * 100);
+          el("uploadStatus").textContent = `${label}: ${m.status} ${pct}%`;
+        }
+      }
+    });
+
+    return result.data.text || "";
+  }
+
+  async function ocrImageFile(file, label) {
+    if (!window.Tesseract) {
+      throw new Error("Tesseract OCR library not loaded.");
+    }
+
+    const result = await Tesseract.recognize(file, "eng", {
+      logger: m => {
+        if (m.status && typeof m.progress === "number") {
+          const pct = Math.round(m.progress * 100);
+          el("uploadStatus").textContent = `${label}: ${m.status} ${pct}%`;
+        }
+      }
+    });
+
+    return result.data.text || "";
   }
 
   async function extractDocxText(file) {
