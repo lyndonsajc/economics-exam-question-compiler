@@ -119,7 +119,7 @@ if(sessionStorage.getItem("econsQuestionBankUnlocked") === "yes"){
 </script>
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -144,12 +144,29 @@ function setUpload(msg){ el("uploadStatus").textContent = msg; }
 function setSave(msg){ el("saveStatus").textContent = msg; }
 
 function initFirebase(){
-  try{ const app = initializeApp(firebaseConfig); db = getFirestore(app); questionsRef = collection(db, COLLECTION); firebaseReady=true; el("firebaseStatus").textContent="Firebase connected."; }
-  catch(err){ console.error(err); el("firebaseStatus").textContent="Firebase not connected. Check config."; }
+  try{
+    const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    questionsRef = collection(db, COLLECTION);
+    firebaseReady = true;
+    el("firebaseStatus").textContent = "Firebase connected.";
+    return true;
+  }
+  catch(err){
+    console.error("Firebase init failed:", err);
+    firebaseReady = false;
+    el("firebaseStatus").textContent = "Firebase not connected: " + (err.message || err);
+    return false;
+  }
+}
+
+function ensureFirebase(){
+  if(firebaseReady && db && questionsRef) return true;
+  return initFirebase();
 }
 
 async function loadQuestions(){
-  if(!firebaseReady) return;
+  if(!ensureFirebase()) return;
   try{
     let snap;
     try{ snap = await withTimeout(getDocs(query(questionsRef, orderBy("year","desc"))), 15000, "Firestore loading timed out."); }
@@ -159,7 +176,15 @@ async function loadQuestions(){
   }catch(err){ console.error(err); el("firebaseStatus").textContent="Could not load Firebase. Check Firestore rules."; }
 }
 
-async function startApp(){   if(!firebaseReady) initFirebase();   renderQuestions();   await loadQuestions(); }  window.addEventListener("app-unlocked", startApp);  if(sessionStorage.getItem("econsQuestionBankUnlocked") === "yes"){   startApp(); }
+async function startApp(){
+  ensureFirebase();
+  renderQuestions();
+  await loadQuestions();
+}
+window.addEventListener("app-unlocked", startApp);
+if(sessionStorage.getItem("econsQuestionBankUnlocked") === "yes"){
+  startApp();
+}
 
 function getFormItem(){ return {
   year: fields.year.value.trim(), jc: fields.jc.value.trim(), level: fields.level.value, type: fields.type.value,
@@ -168,7 +193,7 @@ function getFormItem(){ return {
 };}
 
 async function saveQuestion(){
-  if(!firebaseReady) return alert("Firebase is not connected yet.");
+  if(!ensureFirebase()) return alert("Firebase is not connected. Check Firebase config or browser console.");
   const item = getFormItem();
   if(!item.year || !item.jc || !item.question) return alert("Please fill in Year, JC/source and Question.");
   try{
@@ -229,7 +254,7 @@ async function callAI(text){
 function cleanJson(t){ return String(t||"").replace(/```json/g,"").replace(/```/g,"").trim(); }
 
 async function aiCaptureFromUploadedText(){
- if(!firebaseReady) return alert("Firebase is not connected yet."); const text=el("uploadedText").value.trim(); if(!text) return alert("Extract text first.");
+ if(!ensureFirebase()) return alert("Firebase is not connected. Check Firebase config or browser console."); const text=el("uploadedText").value.trim(); if(!text) return alert("Extract text first.");
  setUpload("AI is capturing questions and saving to Firebase...");
  try{ const result=await callAI(text.slice(0,70000)); const arr=JSON.parse(cleanJson(result)); if(!Array.isArray(arr)) throw new Error("AI did not return an array."); let saved=0, skipped=0;
   for(const item of arr){ if(!item.question){ skipped++; continue; } if(isDuplicate(item)){ skipped++; log(`Skipped duplicate: ${item.year||""} ${item.jc||""} ${item.qNumber||""}`,"logWarn"); continue; }
