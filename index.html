@@ -105,6 +105,14 @@
 
   <main id="app">
     <div class="card">
+      <h2>AI Settings</h2>
+      <input id="apiKeyInput" type="password" placeholder="Paste OpenRouter API Key here" autocomplete="off" />
+      <button id="saveApiKeyBtn" class="green" type="button">Save AI Key</button>
+      <button id="clearApiKeyBtn" class="secondary" type="button">Clear AI Key</button>
+      <p id="apiKeyStatus" class="small"></p>
+    </div>
+
+    <div class="card">
       <h2>Upload PDF / Word Documents</h2>
       <input type="file" id="docUpload" accept=".pdf,.docx" multiple />
       <button id="extractBtn" type="button">Extract Text from Uploaded Files</button>
@@ -216,8 +224,36 @@
     appId: "1:9657008627:web:5e9b2102d13a074bc1d286"
   };
 
-  // Paste OpenRouter key only if repo is private. Public GitHub will expose it.
-  const OPENROUTER_API_KEY = "PASTE_OPENROUTER_API_KEY";
+  // AI key is stored in this browser only. No code editing needed.
+  function getOpenRouterKey() {
+    return localStorage.getItem("openrouterKey") || "";
+  }
+
+  function updateApiKeyStatus() {
+    const key = getOpenRouterKey();
+    const status = el("apiKeyStatus");
+    if (!status) return;
+    status.textContent = key ? "AI key saved in this browser." : "No AI key saved yet.";
+  }
+
+  function saveApiKey() {
+    const key = el("apiKeyInput").value.trim();
+    if (!key) {
+      alert("Paste your OpenRouter API key first.");
+      return;
+    }
+    localStorage.setItem("openrouterKey", key);
+    el("apiKeyInput").value = "";
+    updateApiKeyStatus();
+    alert("AI key saved.");
+  }
+
+  function clearApiKey() {
+    localStorage.removeItem("openrouterKey");
+    el("apiKeyInput").value = "";
+    updateApiKeyStatus();
+    alert("AI key cleared.");
+  }
 
   let db = null;
   let questionsRef = null;
@@ -267,6 +303,7 @@
 
   window.addEventListener("app-unlocked", async () => {
     initFirebase();
+    updateApiKeyStatus();
     renderQuestions();
     await loadQuestions();
   });
@@ -600,15 +637,17 @@ ${text.slice(0, 50000)}
   }
 
   async function callAI(prompt) {
-    if (!OPENROUTER_API_KEY || OPENROUTER_API_KEY.includes("PASTE")) {
-      alert("Paste your OpenRouter API key into OPENROUTER_API_KEY first.");
+    const apiKey = getOpenRouterKey();
+
+    if (!apiKey) {
+      alert("Paste your OpenRouter API key in the AI Settings box, then click Save AI Key.");
       return "{}";
     }
 
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -733,6 +772,8 @@ ${q.extractSummary || "-"}
     a.click();
   }
 
+  el("saveApiKeyBtn").addEventListener("click", saveApiKey);
+  el("clearApiKeyBtn").addEventListener("click", clearApiKey);
   el("saveBtn").addEventListener("click", saveQuestion);
   el("clearBtn").addEventListener("click", clearForm);
   el("extractBtn").addEventListener("click", extractFromDocument);
