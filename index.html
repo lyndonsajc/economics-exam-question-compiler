@@ -41,7 +41,7 @@ const COLLECTION="examQuestionsV3"; let app,db,questionsRef,questions=[],firebas
 const baseFields=["editId","year","jc","level","type","qNumber","topic","syllabusArea","extract","extractSummary","keywords"].reduce((a,id)=>(a[id]=el(id),a),{});
 function buildPartInputs(){ el("partInputs").innerHTML=parts.map(p=>`<div class="part"><b>(${p.toLowerCase()})</b><div class="grid"><input id="part${p}Marks" placeholder="Marks for (${p.toLowerCase()})"><input id="part${p}Tag" placeholder="Optional tag"></div><textarea id="part${p}Question" placeholder="Question (${p.toLowerCase()})"></textarea><textarea id="part${p}Answer" placeholder="Answer / mark scheme (${p.toLowerCase()})"></textarea></div>`).join(""); }
 buildPartInputs();
-function withTimeout(promise,ms,label){return Promise.race([promise,new Promise((_,rej)=>setTimeout(()=>rej(new Error(label||"Timed out")),ms))]);} function setUpload(m){el("uploadStatus").textContent=m;} function setAnswer(m){el("answerStatus").textContent=m;} function setSave(m){el("saveStatus").textContent=m;} function log(msg,cls="logWork"){const box=el("bulkLog");box.classList.remove("hidden");const d=document.createElement("div");d.className="logItem "+cls;d.textContent=msg;box.prepend(d);}
+function withTimeout(promise,ms,label){return Promise.race([promise,new Promise((_,rej)=>setTimeout(()=>rej(new Error(label||"Timed out")),ms))]);} function pause(ms=50){return new Promise(r=>setTimeout(r,ms));} function setUpload(m){el("uploadStatus").textContent=m;} function setAnswer(m){el("answerStatus").textContent=m;} function setSave(m){el("saveStatus").textContent=m;} function log(msg,cls="logWork"){const box=el("bulkLog");box.classList.remove("hidden");const d=document.createElement("div");d.className="logItem "+cls;d.textContent=msg;box.prepend(d);}
 function initFirebase(){ if(firebaseReady) return true; try{ app=initializeApp(firebaseConfig); db=getFirestore(app); questionsRef=collection(db,COLLECTION); firebaseReady=true; el("firebaseStatus").textContent="Firebase connected."; return true;}catch(err){console.error(err); el("firebaseStatus").textContent="Firebase not connected: "+err.message; return false;} }
 async function ensureFirebase(){ if(!firebaseReady) initFirebase(); if(!firebaseReady) throw new Error("Firebase is not connected. Check console/config."); }
 async function startApp(){ if(started) return; started=true; initFirebase(); renderQuestions(); await loadQuestions(); } window.addEventListener("app-unlocked", startApp); if(sessionStorage.getItem("econsQuestionBankUnlocked")==="yes") startApp();
@@ -100,30 +100,107 @@ function questionOrderValue(q){
   return 200+n;
 }
 function isDuplicate(item){const key=`${item.year}|${canonicalSchool(item.jc)}|${cleanLevel(item.level)}|${cleanType(item.type)}|${normaliseQNumber(item.qNumber,item.type)}`.toLowerCase();return questions.some(q=>`${q.year}|${canonicalSchool(q.jc)}|${q.level}|${q.type}|${normaliseQNumber(q.qNumber,q.type)}`.toLowerCase()===key);}
-async function extractFiles(inputId,statusFn){ const files=Array.from(el(inputId).files||[]); if(!files.length){alert("Upload PDF/DOCX files first."); return "";} el("bulkLog").innerHTML=""; let combined=""; for(let i=0;i<files.length;i++){const file=files[i]; log(`Extracting ${i+1}/${files.length}: ${file.name}`); try{let text=""; if(file.name.toLowerCase().endsWith(".pdf")) text=await extractPdfTextOrOCR(file,statusFn); else if(file.name.toLowerCase().endsWith(".docx")) text=await extractDocxText(file); else text="[Unsupported file]"; combined+=`\n\n===== FILE: ${file.name} =====\n\n${text}`; log(`Done: ${file.name} (${text.length.toLocaleString()} chars)`,text.length>100?"logOk":"logWarn");}catch(err){combined+=`\n\n===== FILE: ${file.name} =====\n\n[Failed: ${err.message}]`;log(`Failed: ${file.name} — ${err.message}`,"logBad");}} return combined.trim();}
-async function extractQuestionFiles(){setUpload("Starting extraction..."); el("uploadedText").value=await extractFiles("docUpload",setUpload); setUpload("Question-paper extraction completed.");}
-async function extractAnswerFiles(){
-  setAnswer("Starting bulk answer-key extraction...");
-  el("answerText").value = await extractFiles("answerUpload", setAnswer);
-  const files = Array.from(el("answerUpload").files || []);
-  setAnswer(`Bulk answer-key extraction completed for ${files.length} file(s).`);
+async function extractFiles(inputId,statusFn){
+ const files=Array.from(el(inputId).files||[]);
+ if(!files.length){alert("Upload PDF/DOCX files first."); return "";}
+ el("bulkLog").innerHTML=""; el("bulkLog").classList.remove("hidden");
+ let combined="";
+ for(let i=0;i<files.length;i++){
+  const file=files[i];
+  statusFn(`Preparing ${i+1}/${files.length}: ${file.name}`);
+  log(`Extracting ${i+1}/${files.length}: ${file.name}`,"logWork");
+  await pause();
+  try{
+   let text="";
+   const lower=file.name.toLowerCase();
+   if(lower.endsWith(".pdf")) text=await withTimeout(extractPdfTextOrOCR(file,statusFn),180000,`PDF extraction timed out for ${file.name}`);
+   else if(lower.endsWith(".docx")) text=await withTimeout(extractDocxText(file,statusFn),60000,`Word extraction timed out for ${file.name}`);
+   else text="[Unsupported file]";
+   combined+=`\n\n===== FILE: ${file.name} =====\n\n${text}`;
+   log(`Done: ${file.name} (${text.length.toLocaleString()} chars)`,text.length>100?"logOk":"logWarn");
+  }catch(err){
+   combined+=`\n\n===== FILE: ${file.name} =====\n\n[Failed: ${err.message}]`;
+   log(`Failed: ${file.name} — ${err.message}`,"logBad");
+  }
+  await pause();
+ }
+ return combined.trim();
 }
-async function extractPdfTextOrOCR(file,statusFn){const buffer=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buffer}).promise;let direct="";for(let i=1;i<=pdf.numPages;i++){statusFn(`Reading text page ${i}/${pdf.numPages}: ${file.name}`);const page=await pdf.getPage(i);const content=await page.getTextContent();direct+=content.items.map(item=>item.str).join(" ")+"\n\n";} if(direct.replace(/\s/g,"").length>300)return direct; log(`Little/no selectable text found. OCR started: ${file.name}`,"logWarn"); let ocr="";for(let i=1;i<=pdf.numPages;i++){statusFn(`OCR page ${i}/${pdf.numPages}: ${file.name}`);const page=await pdf.getPage(i);const viewport=page.getViewport({scale:2});const canvas=document.createElement("canvas");const ctx=canvas.getContext("2d");canvas.width=viewport.width;canvas.height=viewport.height;await page.render({canvasContext:ctx,viewport}).promise;const result=await Tesseract.recognize(canvas,"eng",{logger:m=>{if(m.status)statusFn(`OCR page ${i}/${pdf.numPages}: ${m.status} ${m.progress?Math.round(m.progress*100)+"%":""}`);}});ocr+=result.data.text+"\n\n";}return ocr;}
-async function extractDocxText(file){const buffer=await file.arrayBuffer();const result=await mammoth.extractRawText({arrayBuffer:buffer});return result.value;}
+async function extractQuestionFiles(){
+ const btn=el("extractBtn");
+ try{
+  btn.disabled=true; btn.textContent="Extracting... please wait";
+  setUpload("Starting question-paper extraction...");
+  await pause();
+  const text=await extractFiles("docUpload",setUpload);
+  el("uploadedText").value=text;
+  const files=Array.from(el("docUpload").files||[]);
+  setUpload(`Question-paper extraction completed for ${files.length} file(s). ${text.length.toLocaleString()} characters extracted.`);
+ }catch(err){
+  console.error(err); setUpload("Extraction failed: "+err.message); alert("Extraction failed: "+err.message);
+ }finally{
+  btn.disabled=false; btn.textContent="1. Extract / OCR Question Papers";
+ }
+}
+async function extractAnswerFiles(){
+ const btn=el("extractAnswerBtn");
+ try{
+  btn.disabled=true; btn.textContent="Extracting answers... please wait";
+  setAnswer("Starting bulk answer-key extraction...");
+  await pause();
+  const text=await extractFiles("answerUpload", setAnswer);
+  el("answerText").value = text;
+  const files = Array.from(el("answerUpload").files || []);
+  setAnswer(`Bulk answer-key extraction completed for ${files.length} file(s). ${text.length.toLocaleString()} characters extracted.`);
+ }catch(err){
+  console.error(err); setAnswer("Answer extraction failed: "+err.message); alert("Answer extraction failed: "+err.message);
+ }finally{
+  btn.disabled=false; btn.textContent="1. Extract / OCR Answer Files";
+ }
+}
+async function extractPdfTextOrOCR(file,statusFn){
+ if(!window.pdfjsLib) throw new Error("PDF library is not loaded. Refresh and try again.");
+ const buffer=await file.arrayBuffer();
+ const pdf=await pdfjsLib.getDocument({data:buffer}).promise;
+ let direct="";
+ for(let i=1;i<=pdf.numPages;i++){
+  statusFn(`Reading selectable text page ${i}/${pdf.numPages}: ${file.name}`); await pause(20);
+  const page=await pdf.getPage(i); const content=await page.getTextContent();
+  direct+=content.items.map(item=>item.str).join(" ")+"\n\n";
+ }
+ if(direct.replace(/\s/g,"").length>300) return direct;
+ log(`Little/no selectable text found. OCR started: ${file.name}`,"logWarn");
+ let ocr="";
+ for(let i=1;i<=pdf.numPages;i++){
+  statusFn(`OCR page ${i}/${pdf.numPages}: ${file.name}. This may take a while.`); await pause(20);
+  const page=await pdf.getPage(i); const viewport=page.getViewport({scale:2});
+  const canvas=document.createElement("canvas"); const ctx=canvas.getContext("2d");
+  canvas.width=viewport.width; canvas.height=viewport.height;
+  await page.render({canvasContext:ctx,viewport}).promise;
+  const result=await Tesseract.recognize(canvas,"eng",{logger:m=>{if(m.status)statusFn(`OCR page ${i}/${pdf.numPages}: ${m.status} ${m.progress?Math.round(m.progress*100)+"%":""}`);}});
+  ocr+=result.data.text+"\n\n";
+ }
+ return ocr;
+}
+async function extractDocxText(file,statusFn){
+ if(!window.mammoth) throw new Error("Word extraction library is not loaded. Refresh and try again.");
+ statusFn(`Reading Word document: ${file.name}`); await pause(20);
+ const buffer=await file.arrayBuffer();
+ statusFn(`Extracting Word text: ${file.name}`); await pause(20);
+ const result=await mammoth.extractRawText({arrayBuffer:buffer});
+ return result.value || "";
+}
 async function callApi(url,payload){const res=await withTimeout(fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}),120000,"AI request timed out");const data=await res.json();if(!res.ok)throw new Error(data.error||"AI failed");return data.result||"[]";} function cleanJson(t){return String(t||"").replace(/```json/g,"").replace(/```/g,"").trim();}
 async function aiCaptureFromUploadedText(){try{await ensureFirebase();const text=el("uploadedText").value.trim();if(!text)return alert("Extract question-paper text first.");setUpload("AI is capturing questions...");const arr=JSON.parse(cleanJson(await callApi("/api/extractQuestions",{text:text.slice(0,120000)})));if(!Array.isArray(arr))throw new Error("AI did not return an array.");let saved=0,skipped=0;for(const raw of arr){const item=normaliseItem(raw);if(!item.qNumber||(!parts.some(p=>item[`part${p}Question`])&&!item.extract)){skipped++;continue;}if(isDuplicate(item)){skipped++;log(`Skipped duplicate: ${item.year} ${item.jc} ${item.qNumber}`,"logWarn");continue;}await addDoc(questionsRef,item);saved++;}setUpload(`AI import completed. Saved ${saved}. Skipped ${skipped}.`);await loadQuestions();}catch(err){console.error(err);alert("AI import failed: "+err.message);}}
 async function aiCaptureSingle(){try{const arr=JSON.parse(cleanJson(await callApi("/api/extractQuestions",{text:JSON.stringify([getFormItem()])})));const d=Array.isArray(arr)?normaliseItem(arr[0]||{}):normaliseItem(arr);fillForm({...getFormItem(),...d});}catch(err){alert("AI failed: "+err.message);}}
 function splitAnswerTextByFile(text){
-  const parts = String(text || "").split(/
-
-===== FILE:\s*/).map(x => x.trim()).filter(Boolean);
-  if(!parts.length) return [];
-  return parts.map((chunk, i) => {
-    const idx = chunk.indexOf("=====
-
-");
+  const chunks = String(text || "").split(/\n\n===== FILE:\s*/).map(x => x.trim()).filter(Boolean);
+  if(!chunks.length) return [];
+  return chunks.map((chunk, i) => {
+    const marker = "=====\n\n";
+    const idx = chunk.indexOf(marker);
     if(idx >= 0){
-      return { name: chunk.slice(0, idx).trim(), text: chunk.slice(idx + 7).trim() };
+      return { name: chunk.slice(0, idx).trim(), text: chunk.slice(idx + marker.length).trim() };
     }
     return { name: `Answer batch ${i+1}`, text: chunk };
   }).filter(x => x.text && !x.text.startsWith("[Failed:"));
