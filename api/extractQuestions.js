@@ -5,34 +5,44 @@ export default async function handler(req, res) {
 
   try {
     const { text } = req.body || {};
-    if (!text || typeof text !== "string") {
-      return res.status(400).json({ error: "Missing text" });
+    if (!text || !String(text).trim()) {
+      return res.status(400).json({ error: "No text provided" });
     }
 
     if (!process.env.OPENROUTER_API_KEY) {
-      return res.status(500).json({ error: "OPENROUTER_API_KEY is missing in Vercel Environment Variables." });
+      return res.status(500).json({ error: "OPENROUTER_API_KEY is not set in Vercel Environment Variables" });
     }
 
     const prompt = `
 You are an experienced Singapore A-Level Economics teacher and examiner.
 
-The text below may come from one or more Economics exam papers. Extract exam questions into structured records.
+The text below comes from one or more Economics exam papers. Extract records for a searchable Economics question bank.
 
-Important rules:
-- Auto-detect ALL metadata from the paper text: H1/H2, Essay/Case Study, JC/source, year, question number, topic, syllabusArea and keywords.
-- For ESSAY questions: return each essay question as a separate object. If the essay has part (a) and part (b), keep both parts together in the same object under subQuestions unless the paper clearly treats them as independent questions.
-- For CASE STUDY questions: do NOT split parts (a) to (f)/(g) into separate records. Return ONE object per full case study.
-- For a Case Study object, extract must contain the FULL case study source material, including all extracts, tables, data and article/source text that appears before the questions.
-- For a Case Study object, question should be the overall case study title/context or "Case Study Question" if there is no title.
-- For a Case Study object, subQuestions must contain ALL sub-questions from (a) to (f)/(g), preserving marks and numbering exactly where visible.
-- For a Case Study object, qNumber should be like "Case Study 1", "CSQ 2" or the visible paper question number.
-- syllabusArea should be one of: Demand & Supply, Elasticities, Market Failure, Firms, Market Structure, Macroeconomics, Globalisation, Trade, Exchange Rate, Policies, Other.
-- keywords should be a comma-separated string of searchable economics terms.
-- Do not invent content that is not visible. Leave unknown fields blank.
+IMPORTANT CASE STUDY RULE:
+- If the paper contains one full case study with several extracts and sub-questions (a), (b), (c), (d), (e), (f), or (g), return ONE record for that full case study.
+- Do NOT split each sub-question into separate records.
+- Put the full source material/extracts in "extract".
+- Put all sub-questions in "subQuestions" as an array of objects with "part" and "question".
+- The main "question" field should be the overall case study title/question heading, e.g. "Question 1: Japan's persistent economic difficulties".
+
+ESSAY RULE:
+- If it is an essay section with separate essay questions, return one record per essay question.
+
+Auto-detect as much as possible:
+- year
+- JC/source/school, e.g. SAJC, RI, HCI, VJC, A Level, prelim, promo
+- H1 or H2
+- Essay or Case Study
+- question number
+- part if relevant
+- topic
+- syllabusArea: Micro, Macro, International, Firms, Market Failure, Elasticities, Demand and Supply, Policy, Other
+- keywords as an array
+- extractSummary
 
 Return JSON array only. No markdown. No explanation.
 
-Each object must follow this exact shape:
+Every object must use exactly this structure:
 [
   {
     "year": "",
@@ -44,33 +54,32 @@ Each object must follow this exact shape:
     "topic": "",
     "syllabusArea": "",
     "question": "",
-    "subQuestions": "",
+    "subQuestions": [
+      { "part": "(a)", "question": "" }
+    ],
     "extract": "",
     "answerOutline": "",
-    "keywords": "",
+    "keywords": [],
     "extractSummary": ""
   }
 ]
 
-Text:
-${text.slice(0, 70000)}
+Document text:
+${String(text).slice(0, 90000)}
 `;
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://economics-question-bank.vercel.app",
-        "X-Title": "Economics Question Bank"
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",
         messages: [
-          { role: "system", content: "Return clean JSON only. No markdown." },
+          { role: "system", content: "Return valid JSON only. No markdown." },
           { role: "user", content: prompt }
-        ],
-        temperature: 0.1
+        ]
       })
     });
 
@@ -81,6 +90,6 @@ ${text.slice(0, 70000)}
 
     return res.status(200).json({ result: data.choices?.[0]?.message?.content || "[]" });
   } catch (err) {
-    return res.status(500).json({ error: err.message || "Server error" });
+    return res.status(500).json({ error: err.message || String(err) });
   }
 }
